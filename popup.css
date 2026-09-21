@@ -67,16 +67,6 @@ select:focus {
   outline-offset: -1px;
 }
 
-.row {
-  display: flex;
-  gap: 10px;
-}
-
-.row label {
-  flex: 1;
-  margin-bottom: 6px;
-}
-
 .hint {
   margin: 0 0 10px;
   color: var(--muted);

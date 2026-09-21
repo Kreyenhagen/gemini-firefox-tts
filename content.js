@@ -27,7 +27,7 @@
 
   // ---------- starting a session ----------
 
-  function start({ mode, targetElementId, speed, minWords, maxWords }) {
+  function start({ mode, targetElementId, speed, maxWords }) {
     const range = mode === 'selection' ? selectionRange() : fromHereRange(targetElementId);
     teardown();
     if (!range) {
@@ -35,7 +35,7 @@
       return;
     }
     const paras = collectParagraphs(range, mode === 'selection' ? ALWAYS_SKIP : ARTICLE_SKIP, mode === 'from-here');
-    const chunks = buildChunks(paras, minWords, maxWords);
+    const chunks = buildChunks(paras, maxWords);
     if (!chunks.length) {
       showNotice('No readable text found here.');
       return;
@@ -43,7 +43,10 @@
     window.getSelection().removeAllRanges();
 
     const port = browser.runtime.connect({ name: 'gtts' });
-    const session = { port, chunks, speed, paused: false, chunkIndex: -1, ranges: [], widget: null };
+    const session = {
+      port, chunks, speed, paused: false,
+      chunkIndex: -1, lastSentence: -1, ranges: [], paraGroups: [], widget: null,
+    };
     current = session;
     session.widget = createWidget(session);
     port.onMessage.addListener((msg) => onPortMessage(session, msg));
@@ -52,8 +55,9 @@
       type: 'load',
       speed,
       chunks: chunks.map((c) => ({
-        text: c.sentences.map((s, i) => (i === 0 ? '' : s.paraBreak ? '\n\n' : ' ') + s.text).join(''),
+        text: c.sentences.map((s, i) => (i === 0 ? '' : s.para !== c.sentences[i - 1].para ? '\n\n' : ' ') + s.text).join(''),
         weights: c.sentences.map((s) => s.text.length),
+        words: c.words,
       })),
     });
   }
@@ -193,29 +197,36 @@
   }
 
   // ---------- chunking ----------
-  // A chunk (one TTS request) ends at a paragraph break once it has at least minWords,
-  // and never exceeds maxWords: if the next sentence would overflow, the chunk ends at
-  // the previous sentence. A single sentence longer than maxWords is split by words.
+  // A chunk is one TTS request. Whole paragraphs are packed in greedily, never split,
+  // up to maxWords. A paragraph longer than maxWords on its own is split at sentence
+  // boundaries instead (and, if a single sentence is itself too long, at word boundaries).
+  // This is purely about request size/quality; highlighting tracks real paragraphs
+  // separately (see showChunk), so merging or splitting here doesn't affect it.
 
-  function buildChunks(paras, minWords, maxWords) {
+  function buildChunks(paras, maxWords) {
     const chunks = [];
     let chunk = null;
+    const push = () => { if (chunk) { chunks.push(chunk); chunk = null; } };
+    const add = (pieces) => {
+      const words = pieces.reduce((sum, p) => sum + p.words, 0);
+      if (chunk && chunk.words + words > maxWords) push();
+      chunk ??= { sentences: [], words: 0 };
+      chunk.sentences.push(...pieces);
+      chunk.words += words;
+    };
+
     for (const p of paras) {
-      p.sentences.forEach((sentence, si) => {
-        const pieces = sentence.words > maxWords ? splitSentence(sentence, maxWords) : [sentence];
-        pieces.forEach((piece, pi) => {
-          const startsPara = si === 0 && pi === 0;
-          if (chunk && ((startsPara && chunk.words >= minWords) || chunk.words + piece.words > maxWords)) {
-            chunks.push(chunk);
-            chunk = null;
-          }
-          chunk ??= { sentences: [], words: 0 };
-          chunk.sentences.push({ ...piece, paraBreak: startsPara && chunk.sentences.length > 0 });
-          chunk.words += piece.words;
-        });
-      });
+      const paraWords = p.sentences.reduce((sum, s) => sum + s.words, 0);
+      if (paraWords <= maxWords) {
+        add(p.sentences);
+      } else {
+        push(); // give an oversized paragraph a fresh chunk to split across
+        for (const sentence of p.sentences) {
+          add(sentence.words > maxWords ? splitSentence(sentence, maxWords) : [sentence]);
+        }
+      }
     }
-    if (chunk) chunks.push(chunk);
+    push();
     return chunks;
   }
 
@@ -240,6 +251,7 @@
     switch (msg.type) {
       case 'chunk':
         showChunk(session, msg.index);
+        session.lastSentence = 0;
         highlightSentence(session, 0);
         session.paused = msg.paused;
         updateWidget(session, msg.loading);
@@ -249,7 +261,13 @@
         updateWidget(session, msg.loading);
         break;
       case 'progress':
-        if (msg.chunk === session.chunkIndex) highlightSentence(session, msg.sentence);
+        if (msg.chunk === session.chunkIndex) {
+          if (msg.sentence !== session.lastSentence) {
+            session.lastSentence = msg.sentence;
+            highlightSentence(session, msg.sentence);
+          }
+          if (msg.remainingSec != null) updateTimer(session, msg.elapsedSec, msg.remainingSec);
+        }
         break;
       case 'error':
         clearHighlights();
@@ -263,18 +281,28 @@
   }
 
   // ---------- highlighting ----------
+  // Two layers: a subtle highlight over the whole source paragraph containing the
+  // sentence being read, and a stronger one on that sentence. Both are computed from
+  // the real DOM paragraphs, independent of how sentences were grouped into TTS requests.
 
   function showChunk(session, index) {
     session.chunkIndex = index;
-    session.ranges = session.chunks[index].sentences.map(makeRange).filter(Boolean);
-    setHighlight('gtts-chunk', session.ranges);
+    const sentences = session.chunks[index].sentences;
+    session.ranges = sentences.map(makeRange); // index-aligned with sentences; entries may be null
+    session.paraGroups = [];
+    sentences.forEach((sentence, i) => {
+      const g = session.paraGroups[session.paraGroups.length - 1];
+      if (g && sentence.para === sentences[g.start].para) g.end = i;
+      else session.paraGroups.push({ start: i, end: i });
+    });
   }
 
   function highlightSentence(session, i) {
+    const group = session.paraGroups.find((g) => i >= g.start && i <= g.end);
+    if (group) setHighlight('gtts-paragraph', session.ranges.slice(group.start, group.end + 1).filter(Boolean));
     const range = session.ranges[i];
-    if (!range) return;
-    setHighlight('gtts-sentence', [range]);
-    scrollIntoViewIfNeeded(range);
+    setHighlight('gtts-sentence', range ? [range] : []);
+    if (range) scrollIntoViewIfNeeded(range);
   }
 
   function makeRange({ para, start, end }) {
@@ -311,7 +339,7 @@
 
   function clearHighlights() {
     try {
-      CSS.highlights.delete('gtts-chunk');
+      CSS.highlights.delete('gtts-paragraph');
       CSS.highlights.delete('gtts-sentence');
     } catch {
       window.wrappedJSObject.CSS.highlights.clear();
@@ -368,10 +396,26 @@
 
   function updateWidget(session, loading) {
     setPlayIcon(session);
+    if (loading) {
+      session.status.classList.remove('gtts-error');
+      session.status.textContent = 'Loading…';
+    }
+  }
+
+  // Elapsed / estimated-total time, e.g. "1:32 / 8:47". The total is a moving estimate:
+  // it sharpens once real chunk durations come in, and updates live if speed changes.
+  function updateTimer(session, elapsedSec, remainingSec) {
     session.status.classList.remove('gtts-error');
-    session.status.textContent = loading
-      ? 'Loading…'
-      : `${session.chunkIndex + 1} / ${session.chunks.length}`;
+    session.status.textContent = `${formatTime(elapsedSec)} / ${formatTime(elapsedSec + remainingSec)}`;
+  }
+
+  function formatTime(seconds) {
+    const total = Math.max(0, Math.round(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const mm = h > 0 ? String(m).padStart(2, '0') : m;
+    return (h > 0 ? `${h}:${mm}` : `${mm}`) + `:${String(s).padStart(2, '0')}`;
   }
 
   function setPlayIcon(session) {

@@ -23,17 +23,11 @@
     <select id="speed"></select>
   </label>
 
-  <div class="row">
-    <label>
-      <span>Min words per chunk</span>
-      <input id="minWords" type="number" min="1" max="2000" step="1">
-    </label>
-    <label>
-      <span>Max words per chunk</span>
-      <input id="maxWords" type="number" min="1" max="2000" step="1">
-    </label>
-  </div>
-  <p class="hint">Paragraphs are merged until a chunk reaches the minimum. A chunk that would pass the maximum ends at the previous sentence.</p>
+  <label>
+    <span>Max words per request</span>
+    <input id="maxWords" type="number" min="1" max="20000" step="1">
+  </label>
+  <p class="hint">The whole page is sent to Gemini in as few requests as possible. A page longer than this is split at a paragraph break instead (or a sentence break, if one paragraph alone is longer than this). Raising it means fewer splits, but a longer wait before playback starts and a higher chance Gemini's audio quality drifts on very long requests.</p>
 
   <p id="status" role="status"></p>
 

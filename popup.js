@@ -23,29 +23,20 @@ browser.storage.local.get(DEFAULTS).then((s) => {
   $('apiKey').value = s.apiKey;
   $('voice').value = s.voice;
   $('speed').value = String(s.speed);
-  $('minWords').value = s.minWords;
   $('maxWords').value = s.maxWords;
 });
 
 $('apiKey').addEventListener('change', () => save({ apiKey: $('apiKey').value.trim() }));
 $('voice').addEventListener('change', () => save({ voice: $('voice').value }));
 $('speed').addEventListener('change', () => save({ speed: Number($('speed').value) }));
-$('minWords').addEventListener('change', saveWordLimits);
-$('maxWords').addEventListener('change', saveWordLimits);
-
-function saveWordLimits() {
-  const min = Number($('minWords').value);
+$('maxWords').addEventListener('change', () => {
   const max = Number($('maxWords').value);
-  if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || max < 1 || max > 2000) {
-    showStatus('Word limits must be whole numbers from 1 to 2000.', true);
+  if (!Number.isInteger(max) || max < 1 || max > 20000) {
+    showStatus('Max words must be a whole number from 1 to 20000.', true);
     return;
   }
-  if (max < min) {
-    showStatus('Max words must be at least the min.', true);
-    return;
-  }
-  save({ minWords: min, maxWords: max });
-}
+  save({ maxWords: max });
+});
 
 function save(values) {
   browser.storage.local.set(values).then(
