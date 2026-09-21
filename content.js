@@ -9,7 +9,15 @@
   const ALWAYS_SKIP = 'script, style, noscript, template, svg, math, iframe, canvas, video, audio, select, textarea, input, #gtts-widget';
   const ARTICLE_SKIP = `${ALWAYS_SKIP}, nav, aside, footer, form, button, figure, pre, sup, [aria-hidden="true"],
     [role="navigation"], [role="complementary"], [role="contentinfo"], [role="button"],
+    [data-ad-slot], [data-ad-unit], [data-google-query-id],
     .sr-only, .visually-hidden, .screen-reader-text`;
+  // Words in a class/id/aria-label that mark ads, related-article strips, comments, share bars…
+  const JUNK_NAME = / (ads?|adverts?|advertis\w*|adsbygoogle|dfp|sponsor\w*|promo\w*|related|recommend\w*|recirc|taboola|outbrain|revcontent|mgid|zergnet|newsletter|subscribe|signup|shar(e|ing)|social|comments?|trending|popular|most read|read (next|more)|sidebar|widget) /;
+  // A heading or line that is only one of these labels (lowercased, trailing punctuation dropped).
+  const JUNK_LABEL = /^(ads?|advertisements?|sponsored( (content|links|stories|by .+))?|promoted( (content|stories))?|paid (content|post)|story continues (below|after) advertisement|(continue|keep) reading( below)?|scroll to continue( reading)?|skip advertisement|(from )?around the web|related( (articles?|stories|posts?|content|coverage|links|topics|news))?|recommended( (for you|articles?|stories|posts?))?|you (may|might) (also )?(like|enjoy|be interested in)|more (stories|articles|posts|news)( from .+)?|read (next|more|also)|up next|trending( (now|posts|stories|articles))?|(most )?popular( (now|posts|stories|articles))?|most read|latest (news|stories|articles|posts)|(leave a )?(comment|reply)s?( \(\d+\))?|\d+ (comments?|replies)|share( this( article| story| post)?)?|subscribe( now)?|newsletter|sign up( now)?)$/;
+  // A line that opens with an inline pointer to another article, e.g. "Also read: …".
+  const PROMO_LEAD = /^(also read|read also|related|read more|see also|read next|recommended)\s*[:\-–—]/;
+  const HEADING = 'h1, h2, h3, h4, h5, h6';
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const ICONS = {
     play: 'M8 5v14l11-7z',
@@ -27,14 +35,14 @@
 
   // ---------- starting a session ----------
 
-  function start({ mode, targetElementId, speed, minWords, maxWords }) {
+  function start({ mode, targetElementId, speed, autoScroll, minWords, maxWords }) {
     const range = mode === 'selection' ? selectionRange() : fromHereRange(targetElementId);
     teardown();
     if (!range) {
       showNotice('Highlight some text first.');
       return;
     }
-    const paras = collectParagraphs(range, mode === 'selection' ? ALWAYS_SKIP : ARTICLE_SKIP, mode === 'from-here');
+    const paras = collectParagraphs(range, mode === 'from-here');
     const chunks = buildChunks(paras, minWords, maxWords);
     if (!chunks.length) {
       showNotice('No readable text found here.');
@@ -43,7 +51,10 @@
     window.getSelection().removeAllRanges();
 
     const port = browser.runtime.connect({ name: 'gtts' });
-    const session = { port, chunks, speed, paused: false, chunkIndex: -1, ranges: [], widget: null };
+    const session = {
+      port, chunks, speed, autoScroll,
+      paused: false, loading: true, time: null, chunkIndex: -1, ranges: [], widget: null,
+    };
     current = session;
     session.widget = createWidget(session);
     port.onMessage.addListener((msg) => onPortMessage(session, msg));
@@ -113,13 +124,17 @@
 
   // Paragraph = run of text nodes sharing the same nearest block-level ancestor.
   // Each keeps a map from its text offsets back to DOM text nodes for highlighting.
-  function collectParagraphs(range, skipSelector, snapToWord) {
+  // `article` is true for "read from here": skip page furniture and start on a word boundary.
+  function collectParagraphs(range, article) {
     const container = range.commonAncestorContainer;
     const rootEl = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
+    const skipSelector = article ? ARTICLE_SKIP : ALWAYS_SKIP;
+    const isFurniture = article && furnitureTest(rootEl, range.startContainer);
     const blockCache = new Map();
     const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, (n) => {
       if (n.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
       if (n.matches(skipSelector) || !n.checkVisibility({ visibilityProperty: true })) return NodeFilter.FILTER_REJECT;
+      if (isFurniture && isFurniture(n)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     });
 
@@ -149,7 +164,7 @@
       p.from = first.start + (first.node === range.startContainer ? range.startOffset : 0);
       p.to = last.start + (last.node === range.endContainer ? range.endOffset : last.node.length);
     }
-    if (snapToWord && paras.length) {
+    if (article && paras.length) {
       const p = paras[0];
       while (p.from > 0 && /\S/.test(p.text[p.from - 1])) p.from--;
     }
@@ -168,7 +183,7 @@
         p.sentences.push({ para: p, start: s, end: e, text, words: text.split(' ').length });
       }
     }
-    return paras.filter((p) => p.sentences.length);
+    return paras.filter((p) => p.sentences.length && !(article && isLabelLine(p.text)));
   }
 
   function closestBlock(el, cache) {
@@ -190,6 +205,59 @@
     } catch {
       return new Intl.Segmenter(undefined, { granularity: 'sentence' });
     }
+  }
+
+  // ---------- page furniture ----------
+  // Best-effort guesses at ads, related-article strips, comments and share bars inside
+  // the article. They fail open: a block is never skipped if it holds the point reading
+  // starts from, or makes up half or more of the article's text.
+
+  function furnitureTest(root, startNode) {
+    const rootLength = root.textContent.length;
+    return (el) => (hasJunkName(el) || startsWithJunkHeading(el) || isLinkBlock(el))
+      && !el.contains(startNode)
+      && el.textContent.length < rootLength / 2;
+  }
+
+  function hasJunkName(el) {
+    const words = ['class', 'id', 'aria-label', 'data-testid', 'data-component']
+      .map((name) => el.getAttribute(name) || '')
+      .join(' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ');
+    return JUNK_NAME.test(` ${words} `);
+  }
+
+  // A heading like "Related articles", or a wrapper whose first text is one.
+  function startsWithJunkHeading(el) {
+    const heading = el.matches(HEADING) ? el : el.querySelector(HEADING);
+    if (!heading) return false;
+    const title = normalize(heading.textContent);
+    return JUNK_LABEL.test(title) && (heading === el || normalize(el.textContent).startsWith(title));
+  }
+
+  // Lists and card grids that are almost all links: related stories, tables of contents.
+  function isLinkBlock(el) {
+    if (!/^(ul|ol|div|section)$/.test(el.localName)) return false;
+    const links = el.querySelectorAll('a');
+    if (links.length < 3) return false;
+    let linked = 0;
+    for (const a of links) linked += textSize(a);
+    return linked >= 0.7 * textSize(el);
+  }
+
+  function isLabelLine(text) {
+    const line = normalize(text);
+    return JUNK_LABEL.test(line) || PROMO_LEAD.test(line);
+  }
+
+  function normalize(text) {
+    return text.replace(/\s+/g, ' ').trim().toLowerCase().replace(/[\s:.\-–—|•·]+$/, '');
+  }
+
+  function textSize(el) {
+    return el.textContent.replace(/\s/g, '').length;
   }
 
   // ---------- chunking ----------
@@ -251,6 +319,13 @@
       case 'progress':
         if (msg.chunk === session.chunkIndex) highlightSentence(session, msg.sentence);
         break;
+      case 'time':
+        session.time = msg;
+        if (!session.loading) renderStatus(session);
+        break;
+      case 'autoScroll':
+        session.autoScroll = msg.value;
+        break;
       case 'error':
         clearHighlights();
         showError(session, msg.message);
@@ -274,7 +349,7 @@
     const range = session.ranges[i];
     if (!range) return;
     setHighlight('gtts-sentence', [range]);
-    scrollIntoViewIfNeeded(range);
+    if (session.autoScroll) scrollIntoViewIfNeeded(range);
   }
 
   function makeRange({ para, start, end }) {
@@ -368,10 +443,28 @@
 
   function updateWidget(session, loading) {
     setPlayIcon(session);
+    session.loading = loading;
+    renderStatus(session);
+  }
+
+  function renderStatus(session) {
     session.status.classList.remove('gtts-error');
-    session.status.textContent = loading
-      ? 'Loading…'
-      : `${session.chunkIndex + 1} / ${session.chunks.length}`;
+    session.status.title = session.loading ? '' : 'Elapsed / estimated total time';
+    session.status.textContent = session.loading ? 'Loading…' : formatTimer(session.time);
+  }
+
+  // "1:32 / 8:47". The total is an estimate ("~") until every chunk has been fetched,
+  // and it follows speed changes.
+  function formatTimer(time) {
+    if (!time) return '';
+    return `${formatTime(time.elapsed)} / ${time.exact ? '' : '~'}${formatTime(time.total)}`;
+  }
+
+  function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = String(seconds % 60).padStart(2, '0');
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
   }
 
   function setPlayIcon(session) {

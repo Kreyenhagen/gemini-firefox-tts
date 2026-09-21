@@ -97,7 +97,7 @@
 }
 
 #gtts-widget .gtts-status {
-  min-width: 56px;
+  min-width: 84px;
   max-width: 240px;
   overflow: hidden;
   white-space: nowrap;

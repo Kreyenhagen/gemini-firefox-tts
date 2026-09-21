@@ -7,6 +7,7 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 const PROMPT = 'Read the following text aloud, word for word:\n\n';
 const PREFETCH = 2; // chunks synthesized ahead of the one playing
 const SENTENCE_PAUSE = 12; // extra weight (in characters) per sentence when estimating timing
+const FALLBACK_SEC_PER_WORD = 0.4; // ~150 wpm, used for the timer until a real chunk length is known
 
 // ---------- settings ----------
 
@@ -17,6 +18,8 @@ browser.storage.onChanged.addListener((changes, area) => {
   for (const [key, { newValue }] of Object.entries(changes)) {
     settings[key] = newValue ?? DEFAULTS[key];
   }
+  // Applies to a reading already in progress; other settings wait for the next one.
+  if (session && 'autoScroll' in changes) post(session, { type: 'autoScroll', value: settings.autoScroll });
 });
 
 // ---------- context menu ----------
@@ -40,6 +43,7 @@ browser.menus.onClicked.addListener((info, tab) => {
     mode: info.menuItemId === 'gtts-selection' ? 'selection' : 'from-here',
     targetElementId: info.targetElementId,
     speed: settings.speed,
+    autoScroll: settings.autoScroll,
     minWords: settings.minWords,
     maxWords: settings.maxWords,
   });
@@ -92,9 +96,14 @@ function startSession(port, { chunks, speed }) {
     port,
     chunks: chunks.map((c) => ({
       ...c,
+      words: c.text.split(/\s+/).length,
       total: c.weights.reduce((sum, w) => sum + w + SENTENCE_PAUSE, 0),
     })),
     speed,
+    durations: [], // chunk index -> seconds of audio at 1x, known once synthesized
+    elapsedBase: 0, // listening time accrued before the current speed took effect
+    segStart: 0, // audio position (1x seconds) where the current speed took effect
+    timeKey: '',
     audio,
     index: -1,
     sentence: -1,
@@ -108,7 +117,10 @@ function startSession(port, { chunks, speed }) {
   };
   session = s;
   audio.addEventListener('ended', () => playChunk(s, s.index + 1));
-  s.ticker = setInterval(() => updateSentence(s), 100);
+  s.ticker = setInterval(() => {
+    updateSentence(s);
+    updateTime(s);
+  }, 100);
   playChunk(s, 0);
 }
 
@@ -149,6 +161,7 @@ async function playChunk(s, i) {
   s.audio.playbackRate = s.speed;
   s.audio.preservesPitch = true;
   s.ready = true;
+  updateTime(s); // so the readout is there the moment "Loading…" clears
   post(s, { type: 'state', loading: false, paused: s.paused });
   if (!s.paused) play(s);
 }
@@ -174,6 +187,9 @@ function resume(s) {
 }
 
 function setSpeed(s, value) {
+  const pos = position(s);
+  s.elapsedBase += (pos - s.segStart) / s.speed; // time so far was spent at the old speed
+  s.segStart = pos;
   s.speed = value;
   s.audio.defaultPlaybackRate = value;
   s.audio.playbackRate = value;
@@ -196,6 +212,48 @@ function updateSentence(s) {
     s.sentence = j;
     post(s, { type: 'progress', chunk: s.index, sentence: j });
   }
+}
+
+// ---------- timer ----------
+// Audio lengths are tracked in seconds at 1x and divided by the current speed for
+// display, so the readout follows speed changes. Chunks already synthesized have exact
+// lengths; the rest are estimated from the seconds-per-word measured so far.
+
+// How far into the whole read we are, in 1x seconds.
+function position(s) {
+  let pos = 0;
+  for (let j = 0; j < s.index; j++) pos += s.durations[j];
+  if (s.ready) pos += Math.min(s.audio.currentTime, s.durations[s.index]);
+  return pos;
+}
+
+function estimateTotal(s) {
+  let known = 0;
+  let knownWords = 0;
+  let unknownWords = 0;
+  s.chunks.forEach((chunk, j) => {
+    if (s.durations[j] === undefined) {
+      unknownWords += chunk.words;
+    } else {
+      known += s.durations[j];
+      knownWords += chunk.words;
+    }
+  });
+  const secPerWord = knownWords ? known / knownWords : FALLBACK_SEC_PER_WORD;
+  return { total: known + unknownWords * secPerWord, exact: unknownWords === 0 };
+}
+
+// Posts only when the displayed (whole-second) values change.
+function updateTime(s) {
+  const pos = position(s);
+  const { total, exact } = estimateTotal(s);
+  const elapsed = s.elapsedBase + (pos - s.segStart) / s.speed;
+  const remaining = Math.max(0, total - pos) / s.speed;
+  const msg = { type: 'time', elapsed: Math.round(elapsed), total: Math.round(elapsed + remaining), exact };
+  const key = `${msg.elapsed}|${msg.total}|${exact}`;
+  if (key === s.timeKey) return;
+  s.timeKey = key;
+  post(s, msg);
 }
 
 function stop(notify) {
@@ -224,7 +282,10 @@ function post(s, msg) {
 
 function load(s, j) {
   if (s.cache.has(j)) return;
-  const url = synthesizeWithRetry(s.chunks[j].text, s).then((wav) => URL.createObjectURL(wav));
+  const url = synthesizeWithRetry(s.chunks[j].text, s).then(({ blob, duration }) => {
+    s.durations[j] = duration;
+    return URL.createObjectURL(blob);
+  });
   url.catch(() => {}); // errors surface when this chunk is played
   s.cache.set(j, url);
 }
@@ -262,7 +323,8 @@ async function synthesize(text, voice, apiKey, signal) {
   const part = body?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
   if (!part) throw apiError('Gemini returned no audio for this passage.', 0, true);
   const rate = Number(/rate=(\d+)/.exec(part.inlineData.mimeType)?.[1]) || 24000;
-  return pcmToWav(base64ToBytes(part.inlineData.data), rate);
+  const pcm = base64ToBytes(part.inlineData.data);
+  return { blob: pcmToWav(pcm, rate), duration: pcm.length / 2 / rate }; // 16-bit mono
 }
 
 function friendlyMessage(status, msg) {

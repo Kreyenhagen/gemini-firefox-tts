@@ -23,6 +23,7 @@ browser.storage.local.get(DEFAULTS).then((s) => {
   $('apiKey').value = s.apiKey;
   $('voice').value = s.voice;
   $('speed').value = String(s.speed);
+  $('autoScroll').checked = s.autoScroll;
   $('minWords').value = s.minWords;
   $('maxWords').value = s.maxWords;
 });
@@ -30,6 +31,7 @@ browser.storage.local.get(DEFAULTS).then((s) => {
 $('apiKey').addEventListener('change', () => save({ apiKey: $('apiKey').value.trim() }));
 $('voice').addEventListener('change', () => save({ voice: $('voice').value }));
 $('speed').addEventListener('change', () => save({ speed: Number($('speed').value) }));
+$('autoScroll').addEventListener('change', () => save({ autoScroll: $('autoScroll').checked }));
 $('minWords').addEventListener('change', saveWordLimits);
 $('maxWords').addEventListener('change', saveWordLimits);
 

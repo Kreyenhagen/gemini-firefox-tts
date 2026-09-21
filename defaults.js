@@ -3,6 +3,7 @@ const DEFAULTS = {
   apiKey: '',
   voice: 'Kore',
   speed: 1,
+  autoScroll: true,
   minWords: 25,
   maxWords: 150,
 };
