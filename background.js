@@ -7,7 +7,6 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 const PROMPT = 'Read the following text aloud, word for word:\n\n';
 const PREFETCH = 2; // chunks synthesized ahead of the one playing
 const SENTENCE_PAUSE = 12; // extra weight (in characters) per sentence when estimating timing
-const FALLBACK_WORDS_PER_SEC = 2.5; // ~150wpm guess used until a real chunk duration is known
 
 // ---------- settings ----------
 
@@ -41,6 +40,7 @@ browser.menus.onClicked.addListener((info, tab) => {
     mode: info.menuItemId === 'gtts-selection' ? 'selection' : 'from-here',
     targetElementId: info.targetElementId,
     speed: settings.speed,
+    minWords: settings.minWords,
     maxWords: settings.maxWords,
   });
 });
@@ -94,11 +94,6 @@ function startSession(port, { chunks, speed }) {
       ...c,
       total: c.weights.reduce((sum, w) => sum + w + SENTENCE_PAUSE, 0),
     })),
-    totalWords: chunks.reduce((sum, c) => sum + c.words, 0),
-    wordsDone: 0, // words in chunks that have finished playing (for the rate estimate)
-    durationDone: 0, // their real, measured audio duration in seconds
-    elapsedWallSec: 0, // real elapsed listening time, accumulated across pauses/chunks
-    playStartWallTime: null, // performance.now() when playback last (re)started, else null
     speed,
     audio,
     index: -1,
@@ -112,15 +107,7 @@ function startSession(port, { chunks, speed }) {
     ticker: null,
   };
   session = s;
-  audio.addEventListener('ended', () => {
-    accumulateWallClock(s);
-    if (s.index >= 0) {
-      const done = s.chunks[s.index];
-      s.wordsDone += done.words;
-      s.durationDone += audio.duration || 0;
-    }
-    playChunk(s, s.index + 1);
-  });
+  audio.addEventListener('ended', () => playChunk(s, s.index + 1));
   s.ticker = setInterval(() => updateSentence(s), 100);
   playChunk(s, 0);
 }
@@ -167,9 +154,7 @@ async function playChunk(s, i) {
 }
 
 function play(s) {
-  s.audio.play().then(() => {
-    if (s === session) s.playStartWallTime = performance.now();
-  }).catch((err) => {
+  s.audio.play().catch((err) => {
     if (s !== session) return;
     post(s, { type: 'error', message: `Playback failed: ${err.message}` });
     stop(false);
@@ -179,15 +164,7 @@ function play(s) {
 function pause(s) {
   s.paused = true;
   s.audio.pause();
-  accumulateWallClock(s);
   post(s, { type: 'state', loading: !s.ready, paused: true });
-}
-
-function accumulateWallClock(s) {
-  if (s.playStartWallTime != null) {
-    s.elapsedWallSec += (performance.now() - s.playStartWallTime) / 1000;
-    s.playStartWallTime = null;
-  }
 }
 
 function resume(s) {
@@ -203,32 +180,22 @@ function setSpeed(s, value) {
 }
 
 // Gemini returns no timestamps, so estimate the current sentence from how far
-// through the chunk's audio we are, weighted by sentence length. The same tick
-// also reports elapsed/remaining time for the widget's timer.
+// through the chunk's audio we are, weighted by sentence length.
 function updateSentence(s) {
   const { audio } = s;
-  const elapsedSec = s.elapsedWallSec + (s.playStartWallTime != null ? (performance.now() - s.playStartWallTime) / 1000 : 0);
-  if (!s.ready || !audio.duration || !isFinite(audio.duration)) {
-    post(s, { type: 'progress', chunk: s.index, sentence: s.sentence, elapsedSec, remainingSec: null });
-    return;
-  }
+  if (!s.ready || !audio.duration || !isFinite(audio.duration)) return;
   const chunk = s.chunks[s.index];
-  const fraction = audio.currentTime / audio.duration;
-  const target = fraction * chunk.total;
+  const target = (audio.currentTime / audio.duration) * chunk.total;
   let acc = 0;
   let j = 0;
   for (; j < chunk.weights.length - 1; j++) {
     acc += chunk.weights[j] + SENTENCE_PAUSE;
     if (acc > target) break;
   }
-  s.sentence = j;
-
-  const wordsSoFar = s.wordsDone + fraction * chunk.words;
-  const rate = s.durationDone > 0 ? s.wordsDone / s.durationDone : FALLBACK_WORDS_PER_SEC;
-  const remainingWords = Math.max(0, s.totalWords - wordsSoFar);
-  const remainingSec = remainingWords / rate / s.speed;
-
-  post(s, { type: 'progress', chunk: s.index, sentence: j, elapsedSec, remainingSec });
+  if (j !== s.sentence) {
+    s.sentence = j;
+    post(s, { type: 'progress', chunk: s.index, sentence: j });
+  }
 }
 
 function stop(notify) {

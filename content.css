@@ -1,6 +1,6 @@
 /* Injected by the extension via tabs.insertCSS, so page CSP doesn't block it. */
 
-::highlight(gtts-paragraph) {
+::highlight(gtts-chunk) {
   background-color: rgba(255, 213, 79, 0.18);
 }
 
@@ -97,7 +97,7 @@
 }
 
 #gtts-widget .gtts-status {
-  min-width: 84px;
+  min-width: 56px;
   max-width: 240px;
   overflow: hidden;
   white-space: nowrap;
