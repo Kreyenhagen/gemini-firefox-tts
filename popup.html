@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Gemini Reader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Gemini Reader</h1>
+
+  <label>
+    <span>Gemini API key</span>
+    <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key">
+  </label>
+
+  <label>
+    <span>Default voice</span>
+    <select id="voice"></select>
+  </label>
+
+  <label>
+    <span>Default speed</span>
+    <select id="speed"></select>
+  </label>
+
+  <div class="row">
+    <label>
+      <span>Min words per chunk</span>
+      <input id="minWords" type="number" min="1" max="2000" step="1">
+    </label>
+    <label>
+      <span>Max words per chunk</span>
+      <input id="maxWords" type="number" min="1" max="2000" step="1">
+    </label>
+  </div>
+  <p class="hint">Paragraphs are merged until a chunk reaches the minimum. A chunk that would pass the maximum ends at the previous sentence.</p>
+
+  <p id="status" role="status"></p>
+
+  <script src="defaults.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

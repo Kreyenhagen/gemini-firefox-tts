@@ -1,0 +1,37 @@
+{
+  "manifest_version": 2,
+  "name": "Gemini Reader",
+  "version": "1.0.0",
+  "description": "Read web pages aloud with Gemini TTS, highlighting each sentence as it's spoken.",
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  },
+  "permissions": [
+    "menus",
+    "activeTab",
+    "storage",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "scripts": ["defaults.js", "background.js"],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_icon": "icons/icon.svg",
+    "default_title": "Gemini Reader settings",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "popup.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "gemini-reader@personal",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent"]
+      }
+    }
+  }
+}

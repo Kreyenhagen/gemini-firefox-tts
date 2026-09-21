@@ -1,0 +1,95 @@
+:root {
+  --bg: #ffffff;
+  --text: #1e1f24;
+  --muted: #6b6e78;
+  --border: #d6d7dc;
+  --field: #f6f6f8;
+  --accent: #b38600;
+  --error: #c62828;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1f24;
+    --text: #f1f1f3;
+    --muted: #a9abb3;
+    --border: #3a3c44;
+    --field: #2a2b31;
+    --accent: #ffc400;
+    --error: #ff8a80;
+  }
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  padding: 16px;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+label span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row label {
+  flex: 1;
+  margin-bottom: 6px;
+}
+
+.hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+#status {
+  min-height: 1.4em;
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+#status.error {
+  color: var(--error);
+}

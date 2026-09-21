@@ -1,0 +1,110 @@
+/* Injected by the extension via tabs.insertCSS, so page CSP doesn't block it. */
+
+::highlight(gtts-chunk) {
+  background-color: rgba(255, 213, 79, 0.18);
+}
+
+::highlight(gtts-sentence) {
+  background-color: rgba(255, 196, 0, 0.6);
+  color: #111;
+}
+
+#gtts-widget {
+  all: initial;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px 8px 8px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: #1e1f24;
+  color: #f1f1f3;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font: 500 13px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+#gtts-widget button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: inherit;
+  cursor: pointer;
+}
+
+#gtts-widget button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#gtts-widget button:focus-visible {
+  outline: 2px solid #ffc400;
+  outline-offset: 1px;
+}
+
+#gtts-widget button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: none;
+}
+
+#gtts-widget button.gtts-play {
+  width: 36px;
+  height: 36px;
+  background: #ffc400;
+  color: #1e1f24;
+}
+
+#gtts-widget button.gtts-play:hover {
+  background: #ffd24d;
+}
+
+#gtts-widget button.gtts-play:disabled {
+  background: #ffc400;
+}
+
+#gtts-widget svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  stroke: none;
+}
+
+#gtts-widget button.gtts-play svg {
+  width: 20px;
+  height: 20px;
+}
+
+#gtts-widget .gtts-speed-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#gtts-widget .gtts-speed {
+  min-width: 38px;
+  text-align: center;
+}
+
+#gtts-widget .gtts-status {
+  min-width: 56px;
+  max-width: 240px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #a9abb3;
+}
+
+#gtts-widget .gtts-status.gtts-error {
+  color: #ff8a80;
+}
